@@ -1,0 +1,221 @@
+@using ChartJs.Blazor.Common
+@using ChartJs.Blazor.Common.Axes
+@using ChartJs.Blazor.Common.Axes.Ticks
+@using ChartJs.Blazor.Common.Handlers
+@using ChartJs.Blazor.Interop
+@using ChartJs.Blazor.LineChart
+@inject MyStockDashboard.Services.StockDataService StockDataService
+
+
+<div class="stock-chart-container">
+    <!-- Stock Info (placed above the chart) -->
+    <div class="stock-info">
+        @if (stockData != null)
+        {
+            <h3>@(string.IsNullOrWhiteSpace(stockData.LongName) ? Symbol : stockData.LongName)</h3>
+            <p style="color:@priceColor; transition: color 0.5s;">
+                Current Price: @stockData.RegularMarketPrice.ToString("F2")
+                @if (priceDifference != 0)
+                {
+                    <span> (@((priceDifference > 0 ? "+" : "") + priceDifference.ToString("F2")))</span>
+                }
+            </p>
+            <p style="color:@(stockData.RegularMarketChangePercent > 0 ? "green" : (stockData.RegularMarketChangePercent < 0 ? "red" : "yellow"))">
+                Change: @stockData.RegularMarketChange.ToString("F2")
+                (@stockData.RegularMarketChangePercent.ToString("F2")%)
+            </p>
+            <p>
+                Day High: @stockData.RegularMarketDayHigh.ToString("F2") -
+                Day Low: @stockData.RegularMarketDayLow.ToString("F2")
+            </p>
+            <p>
+                Previous Close: @stockData.RegularMarketPreviousClose.ToString("F2")
+            </p>
+        }
+    else
+    {
+        <p>Loading...</p>
+    }
+</div>
+
+    <!-- Chart Section (placed below the stock info) -->
+    <div class="chart-container">
+        <h3>@Symbol Stock Price Chart (Intraday)</h3>
+        @if (_lineConfig != null)
+        {
+        <div style="height:400px; width:600px; border:1px solid red;">
+            <Chart Config="_lineConfig"></Chart>
+        </div>
+        }
+        else
+        {
+        <p>Loading chart data...</p>
+        }
+    </div>
+</div>
+
+@code {
+    // Parameter: stock symbol for this chart.
+    [Parameter]
+    public string Symbol { get; set; } = "HNSA.ST";
+
+    // Live data from YahooFinanceApi for the stock.
+    private YahooFinanceApi.Security stockData;
+    private YahooFinanceApi.Security liveStockData;
+
+    // Chart configuration.
+    private LineConfig _lineConfig;
+
+    // List to store intraday (live) data points.
+    private List<(DateTime Time, double Price)> intradayData = new List<(DateTime, double)>();
+
+    // Timer to poll the live price.
+    private Timer? _timer;
+    
+    private double? previousPrice = null;
+    private double priceDifference = 0;
+    private string priceColor = "yellow";
+
+    protected override async Task OnInitializedAsync()
+    {
+        // Fetch initial live data.
+        stockData = await StockDataService.GetStockDataAsync(Symbol);
+        if (stockData != null)
+        {
+            double currentPrice = (double)stockData.RegularMarketPrice;
+            intradayData.Add((DateTime.Now, currentPrice));
+            previousPrice = currentPrice;
+        }
+
+        // Initialize chart configuration.
+        _lineConfig = new LineConfig
+        {
+            Options = new LineOptions
+            {
+                Responsive = true,
+                Title = new OptionsTitle { Display = true, Text = $"{Symbol} Live Price History" },
+                Scales = new Scales
+                {
+                    XAxes = new List<CartesianAxis>
+                    {
+                        new CategoryAxis { ScaleLabel = new ScaleLabel { Display = true, LabelString = "Time" } }
+                    },
+                    YAxes = new List<CartesianAxis>
+                    {
+                        new LinearCartesianAxis
+                        {
+                            ScaleLabel = new ScaleLabel { Display = true, LabelString = "Price" },
+                            Ticks = new LinearCartesianTicks
+                            {
+                                // Use your custom tick callback, if desired.
+                                Callback = new JavaScriptHandler<AxisTickCallback>("customJsFunctions.yTickCallback")
+                            }
+                        }
+                    }
+                }
+            }
+        };
+
+        // Populate initial chart data.
+        UpdateChartData();
+        StateHasChanged();
+
+        // Set up a timer to poll the live price every minute.
+        _timer = new System.Threading.Timer(async _ =>
+        {
+            try
+            {
+                var live = await StockDataService.GetStockDataAsync(Symbol);
+                if (live != null)
+                {
+                    double newPrice = (double)live.RegularMarketPrice;
+                    
+                    // Compute difference compared to previous price.
+                    if (previousPrice.HasValue)
+                    {
+                        priceDifference = newPrice - previousPrice.Value;
+                        if (priceDifference > 0)
+                        {
+                            priceColor = "green";
+                        }
+                        else if (priceDifference < 0)
+                        {
+                            priceColor = "red";
+                        }
+                        else
+                        {
+                            priceColor = "yellow";
+                        }
+                    }
+                    previousPrice = newPrice;
+                    stockData = live;
+                    intradayData.Add((DateTime.Now, newPrice));
+                    await InvokeAsync(() =>
+                    {
+                        UpdateChartData();
+                        StateHasChanged();
+                    });
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"Timer error for {Symbol}: {ex.Message}");
+            }
+        }, null, TimeSpan.FromMinutes(1), TimeSpan.FromMinutes(1));
+    }
+
+    private void UpdateChartData()
+    {
+        // Clear existing labels and datasets.
+        _lineConfig.Data.Labels.Clear();
+        _lineConfig.Data.Datasets.Clear();
+
+        // Sort intraday data by time.
+        var sortedData = intradayData.OrderBy(d => d.Time).ToList();
+
+        // Add labels (formatted time, e.g., HH:mm).
+        foreach (var entry in sortedData)
+        {
+            _lineConfig.Data.Labels.Add(entry.Time.ToString("HH:mm"));
+        }
+
+        // Create a dataset from the price data.
+        var priceData = sortedData.Select(d => d.Price).ToList();
+
+        // Compute point colors based on consecutive differences.
+        var pointColors = new List<string>();
+        if (priceData.Any())
+        {
+            double prev = priceData.First();
+            foreach (var price in priceData)
+            {
+                if (price > prev)
+                    pointColors.Add("green");
+                else if (price < prev)
+                    pointColors.Add("red");
+                else
+                    pointColors.Add("yellow");
+
+                prev = price;
+            }
+        }
+        
+        var pointBackGroundColor = new IndexableOption<string>(pointColors.ToArray());
+        
+        var dataset = new LineDataset<double>(priceData)
+        {
+            Label = "Live Price",
+            BackgroundColor = "rgba(75, 192, 192, 0.2)",
+            BorderColor = "rgba(75, 192, 192, 1)",
+            // Set individual point colors (if supported by your ChartJs.Blazor fork).
+            PointBackgroundColor = pointBackGroundColor,
+            Fill = false
+        };
+        _lineConfig.Data.Datasets.Add(dataset);
+    }
+
+    public void Dispose()
+    {
+        _timer?.Dispose();
+    }
+}
