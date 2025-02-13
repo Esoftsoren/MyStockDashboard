@@ -13,30 +13,31 @@
                          @bind-Value="SelectedStock"
                          SearchFunc="SearchStocks"
                          ToStringFunc="@(s => s?.CompanyName)"
-                         MinCharacters="1"
+                         MinCharacters="3"
                          Clearable="true"
+                         MudIcon Icon="@Icons.Material.Filled.Search"
                          ResetValueOnEmptyText="true">
             <ItemTemplate>
                 @{
-                // Capture the current item from the autocomplete.
-                var item = context;
+                    // 'context' is provided by MudAutocomplete.
+                    var item = context;
                 }
-                <div style="display: flex; justify-content: space-between; align-items: center;">
+                <div style="display: flex; justify-content: space-between; align-items: center; cursor: pointer;"
+                     @onclick="@(() => OnStockSelected(item))">
                     <div>
                         @item.CompanyName (@item.Symbol)
                         @if (item.StockPrice != 0)
                         {
-                        <span style="margin-left: 1rem;">Price: @item.StockPrice.ToString("F2")</span>
+                            <span style="margin-left: 1rem;">Price: @item.StockPrice.ToString("F2")</span>
                         }
                     </div>
-                    <!-- Decorative plus icon; no onclick here -->
+                    <!-- Decorative plus icon -->
                     <MudIcon Icon="@Icons.Material.Filled.Add" Color="Color.Primary" Size="Size.Small" />
                 </div>
             </ItemTemplate>
         </MudAutocomplete>
     </MudCardContent>
 </MudCard>
-
 
 <div class="stock-container">
     @foreach (var stock in StockPortfolio)
@@ -54,19 +55,9 @@
 </div>
 
 @code {
-
-// Instead of a hardcoded list, we will use the search results
-// for now, we can keep a list of symbols in the portfolio.
-    private List<string> StockPortfolio { get; set; } = new List<string>
-    {
-        "HNSA.ST", "AVXL", "SMCI"
-    };
     
-    // The current search text.
-    private string searchText { get; set; } = string.Empty;
+    private List<string> StockPortfolio { get; set; } = new List<string>();
 
-    // The search results returned from the API.
-    private List<Stock> SearchResults { get; set; } = new List<Stock>();
     
     private Stock _selectedStock;
     private Stock SelectedStock
@@ -74,14 +65,13 @@
         get => _selectedStock;
         set
         {
-            // When a new stock is selected, add it to the portfolio if it isn’t already there.
             if (value != null)
             {
                 if (!StockPortfolio.Contains(value.Symbol.ToUpper()))
                 {
                     StockPortfolio.Add(value.Symbol.ToUpper());
                 }
-                // Reset selection to clear the autocomplete.
+                
                 _selectedStock = null;
             }
             else
@@ -90,26 +80,38 @@
             }
         }
     }
-    // When the user clicks the "Search" button, call the API.
+    
+    protected override async Task OnInitializedAsync()
+    {
+        // Load the user's portfolio from the database.
+        StockPortfolio = await StockDataService.GetUserPortfolioSymbolsAsync();
+    }
+    
+    private async Task OnStockSelected(Stock stock)
+    {
+        if (stock != null && !StockPortfolio.Contains(stock.Symbol.ToUpper()))
+        {
+            // Add to in-memory portfolio.
+            StockPortfolio.Add(stock.Symbol.ToUpper());
+            // Persist to the database.
+            await StockDataService.AddStockToUserPortfolioAsync(stock);
+            // Optionally reload the portfolio from the DB:
+            StockPortfolio = await StockDataService.GetUserPortfolioSymbolsAsync();
+            StateHasChanged();
+        }
+        SelectedStock = null;
+    }
+    
     private async Task<IEnumerable<Stock>> SearchStocks(string value, CancellationToken cancellationToken)
     {
         return await StockDataService.SearchStocksAsync(value);
     }
-    // When the user selects a stock from the search results.
-    private void AddStock(Stock stock)
-    {
-        if (stock != null && !StockPortfolio.Contains(stock.Symbol.ToUpper()))
-        {
-            StockPortfolio.Add(stock.Symbol.ToUpper());
-        }
-
-        // Optionally clear the search results after adding.
-        SearchResults.Clear();
-    }
     
-    private void RemoveStock(string symbol)
+    private async Task RemoveStock(string symbol)
     {
         StockPortfolio.Remove(symbol);
+        await StockDataService.RemoveStockFromUserPortfolioAsync(symbol);
+        StockPortfolio = await StockDataService.GetUserPortfolioSymbolsAsync();
         StateHasChanged();
     }
     

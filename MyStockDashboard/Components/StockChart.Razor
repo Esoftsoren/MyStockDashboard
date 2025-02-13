@@ -14,7 +14,7 @@
         {
             <h3>@(string.IsNullOrWhiteSpace(stockData.LongName) ? Symbol : stockData.LongName)</h3>
             <p style="color:@priceColor; transition: color 0.5s;">
-                Current Price: @stockData.RegularMarketPrice.ToString("F2")
+                Current Price: @stockData.RegularMarketPrice.ToString("F2") (@currency)
                 @if (priceDifference != 0)
                 {
                     <span> (@((priceDifference > 0 ? "+" : "") + priceDifference.ToString("F2")))</span>
@@ -73,6 +73,7 @@
     private Timer? _timer;
     
     private double? previousPrice = null;
+    private string currency = string.Empty;
     private double priceDifference = 0;
     private string priceColor = "yellow";
 
@@ -83,6 +84,7 @@
         if (stockData != null)
         {
             double currentPrice = (double)stockData.RegularMarketPrice;
+            currency = stockData.Currency;
             intradayData.Add((DateTime.Now, currentPrice));
             previousPrice = currentPrice;
         }
@@ -126,6 +128,7 @@
             try
             {
                 var live = await StockDataService.GetStockDataAsync(Symbol);
+                
                 if (live != null)
                 {
                     double newPrice = (double)live.RegularMarketPrice;
@@ -150,6 +153,8 @@
                     previousPrice = newPrice;
                     stockData = live;
                     intradayData.Add((DateTime.Now, newPrice));
+                    
+                    await StockDataService.InsertStockPriceHistoryAsync(Symbol, newPrice);
                     await InvokeAsync(() =>
                     {
                         UpdateChartData();

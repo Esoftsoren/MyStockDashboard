@@ -13,8 +13,10 @@ builder.Services.AddRazorPages();
 builder.Services.AddServerSideBlazor();
 builder.Services.AddMudServices();
 builder.Services.AddHostedService<PressReleaseScraperService>();
+builder.Services.AddHostedService<StockHistoryUpdaterService>();
+builder.Services.AddHttpClient<StockDataService>(); 
 builder.Services.AddDbContext<ApplicationDbContext>(options =>
-    options.UseSqlite(builder.Configuration.GetConnectionString("DefaultConnection")));
+    options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
 builder.Services.AddHttpClient<StockDataService>();
 var app = builder.Build();
 

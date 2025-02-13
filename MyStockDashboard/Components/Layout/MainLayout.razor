@@ -7,11 +7,15 @@
 <MudSnackbarProvider />
 <MudPopoverProvider />
 
-<div class="page">
-    <div class="sidebar">
-        <NavMenu />
-    </div>
-    <main>
+<MudLayout>
+    <MudDrawer Open="true" Variant="DrawerVariant.Temporary">
+        <MudNavMenu>
+            <MudNavLink Href="/dashboard" Icon="@Icons.Material.Filled.TrendingUp" Text="Dashboard" />
+            <MudNavLink Href="/_Host" Icon="@Icons.Material.Filled.Dashboard" Text="Home" />
+        </MudNavMenu>
+    </MudDrawer>
+
+    <MudMainContent>
         @Body
-    </main>
-</div>
+    </MudMainContent>
+</MudLayout>
