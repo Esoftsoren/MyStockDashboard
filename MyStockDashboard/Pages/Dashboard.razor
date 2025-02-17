@@ -10,28 +10,25 @@
                          Label="Search Stocks"
                          Variant="Variant.Outlined"
                          Color="Color.Primary"
-                         @bind-Value="SelectedStock"
+                         Value="SelectedStock"
+                         ValueChanged="OnStockChanged"
                          SearchFunc="SearchStocks"
                          ToStringFunc="@(s => s?.CompanyName)"
                          MinCharacters="3"
                          Clearable="true"
-                         MudIcon Icon="@Icons.Material.Filled.Search"
                          ResetValueOnEmptyText="true">
             <ItemTemplate>
                 @{
-                    // 'context' is provided by MudAutocomplete.
-                    var item = context;
+                var item = context;
                 }
-                <div style="display: flex; justify-content: space-between; align-items: center; cursor: pointer;"
-                     @onclick="@(() => OnStockSelected(item))">
+                <div style="display: flex; justify-content: space-between; align-items: center;">
                     <div>
                         @item.CompanyName (@item.Symbol)
                         @if (item.StockPrice != 0)
                         {
-                            <span style="margin-left: 1rem;">Price: @item.StockPrice.ToString("F2")</span>
+                        <span style="margin-left: 1rem;">Price: @item.StockPrice.ToString("F2")</span>
                         }
                     </div>
-                    <!-- Decorative plus icon -->
                     <MudIcon Icon="@Icons.Material.Filled.Add" Color="Color.Primary" Size="Size.Small" />
                 </div>
             </ItemTemplate>
@@ -42,15 +39,15 @@
 <div class="stock-container">
     @foreach (var stock in StockPortfolio)
     {
-        <div>
-            <StockChart Symbol="@stock" />
-            <MudButton OnClick="() => RemoveStock(stock)" 
-                       Color="Color.Error" 
-                       Variant="Variant.Outlined" 
-                       Style="margin-top: 0.5rem;">
-                Remove
-            </MudButton>
-        </div>
+    <div @key="stock">
+        <StockChart Symbol="@stock" />
+        <MudButton OnClick="() => RemoveStock(stock)"
+                   Color="Color.Error"
+                   Variant="Variant.Outlined"
+                   Style="margin-top: 0.5rem;">
+            Remove
+        </MudButton>
+    </div>
     }
 </div>
 
@@ -59,27 +56,7 @@
     private List<string> StockPortfolio { get; set; } = new List<string>();
 
     
-    private Stock _selectedStock;
-    private Stock SelectedStock
-    {
-        get => _selectedStock;
-        set
-        {
-            if (value != null)
-            {
-                if (!StockPortfolio.Contains(value.Symbol.ToUpper()))
-                {
-                    StockPortfolio.Add(value.Symbol.ToUpper());
-                }
-                
-                _selectedStock = null;
-            }
-            else
-            {
-                _selectedStock = value;
-            }
-        }
-    }
+    private Stock SelectedStock { get; set; }
     
     protected override async Task OnInitializedAsync()
     {
@@ -87,19 +64,16 @@
         StockPortfolio = await StockDataService.GetUserPortfolioSymbolsAsync();
     }
     
-    private async Task OnStockSelected(Stock stock)
+    private async Task OnStockChanged(Stock newValue)
     {
-        if (stock != null && !StockPortfolio.Contains(stock.Symbol.ToUpper()))
+        if (newValue != null && !StockPortfolio.Contains(newValue.Symbol.ToUpper()))
         {
-            // Add to in-memory portfolio.
-            StockPortfolio.Add(stock.Symbol.ToUpper());
-            // Persist to the database.
-            await StockDataService.AddStockToUserPortfolioAsync(stock);
-            // Optionally reload the portfolio from the DB:
+            StockPortfolio.Add(newValue.Symbol.ToUpper());
+            await StockDataService.AddStockToUserPortfolioAsync(newValue);
             StockPortfolio = await StockDataService.GetUserPortfolioSymbolsAsync();
             StateHasChanged();
         }
-        SelectedStock = null;
+        SelectedStock = null; // Reset after processing.
     }
     
     private async Task<IEnumerable<Stock>> SearchStocks(string value, CancellationToken cancellationToken)

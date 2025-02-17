@@ -57,7 +57,8 @@
 @code {
     // Parameter: stock symbol for this chart.
     [Parameter]
-    public string Symbol { get; set; } = "HNSA.ST";
+    public string Symbol { get; set; } = string.Empty;
+    private string _currentSymbol;
 
     // Live data from YahooFinanceApi for the stock.
     private YahooFinanceApi.Security stockData;
@@ -76,20 +77,42 @@
     private string currency = string.Empty;
     private double priceDifference = 0;
     private string priceColor = "yellow";
-
-    protected override async Task OnInitializedAsync()
+    private CancellationTokenSource _cts = new CancellationTokenSource();
+    
+     protected override async Task OnInitializedAsync()
     {
-        // Fetch initial live data.
+        // 1. Load historical data from the DB
+        var historicalData = await StockDataService.GetHistoricalDataAsync(Symbol);
+        intradayData.Clear();
+        intradayData.AddRange(historicalData);
+
+        // 2. Get initial live data.
         stockData = await StockDataService.GetStockDataAsync(Symbol);
         if (stockData != null)
         {
             double currentPrice = (double)stockData.RegularMarketPrice;
             currency = stockData.Currency;
-            intradayData.Add((DateTime.Now, currentPrice));
+            // If no historical data was found, add the current live data.
+            if (!intradayData.Any())
+            {
+                intradayData.Add((DateTime.UtcNow, currentPrice));
+            }
             previousPrice = currentPrice;
         }
 
-        // Initialize chart configuration.
+        // 3. Initialize the chart (the constructor already instantiates Data).
+        InitializeChart();
+
+        // 4. Populate the chart with the current intraday data.
+        UpdateChartData();
+        StateHasChanged();
+
+        // 5. Start the timer to fetch live data every minute.
+        InitializeTimer();
+    }
+    
+    private void InitializeChart()
+    {
         _lineConfig = new LineConfig
         {
             Options = new LineOptions
@@ -109,7 +132,6 @@
                             ScaleLabel = new ScaleLabel { Display = true, LabelString = "Price" },
                             Ticks = new LinearCartesianTicks
                             {
-                                // Use your custom tick callback, if desired.
                                 Callback = new JavaScriptHandler<AxisTickCallback>("customJsFunctions.yTickCallback")
                             }
                         }
@@ -117,71 +139,114 @@
                 }
             }
         };
-
-        // Populate initial chart data.
-        UpdateChartData();
-        StateHasChanged();
-
-        // Set up a timer to poll the live price every minute.
-        _timer = new System.Threading.Timer(async _ =>
+    }
+    
+    protected override async Task OnParametersSetAsync()
+    {
+        // Only reset if the symbol has actually changed.
+        if (string.IsNullOrEmpty(_currentSymbol) || _currentSymbol != Symbol)
         {
-            try
+            _currentSymbol = Symbol;
+        
+            // Clear previous state.
+            intradayData.Clear();
+            previousPrice = null;
+            _timer?.Dispose();
+        
+            // Instead of only adding one live data point,
+            // load the historical data from the DB.
+            var historicalData = await StockDataService.GetHistoricalDataAsync(Symbol);
+            if (historicalData.Any())
             {
-                var live = await StockDataService.GetStockDataAsync(Symbol);
-                
-                if (live != null)
+                intradayData.AddRange(historicalData);
+            }
+            else
+            {
+                stockData = await StockDataService.GetStockDataAsync(Symbol);
+                if (stockData != null)
                 {
-                    double newPrice = (double)live.RegularMarketPrice;
-                    
-                    // Compute difference compared to previous price.
-                    if (previousPrice.HasValue)
-                    {
-                        priceDifference = newPrice - previousPrice.Value;
-                        if (priceDifference > 0)
-                        {
-                            priceColor = "green";
-                        }
-                        else if (priceDifference < 0)
-                        {
-                            priceColor = "red";
-                        }
-                        else
-                        {
-                            priceColor = "yellow";
-                        }
-                    }
-                    previousPrice = newPrice;
-                    stockData = live;
-                    intradayData.Add((DateTime.Now, newPrice));
-                    
-                    await StockDataService.InsertStockPriceHistoryAsync(Symbol, newPrice);
-                    await InvokeAsync(() =>
-                    {
-                        UpdateChartData();
-                        StateHasChanged();
-                    });
+                    double currentPrice = (double)stockData.RegularMarketPrice;
+                    currency = stockData.Currency;
+                    intradayData.Add((DateTime.UtcNow, currentPrice));
+                    previousPrice = currentPrice;
                 }
             }
-            catch (Exception ex)
-            {
-                Console.Error.WriteLine($"Timer error for {Symbol}: {ex.Message}");
-            }
-        }, null, TimeSpan.FromMinutes(1), TimeSpan.FromMinutes(1));
+        
+            // Reinitialize chart configuration if needed.
+            UpdateChartData();
+        
+            // Reinitialize the timer.
+            //
+            InitializeTimer();
+        }
+        // If the symbol hasn’t changed, do nothing.
     }
+    
+      private async void InitializeTimer()
+  {
+      var periodicTimer = new PeriodicTimer(TimeSpan.FromMinutes(1));
+      _ = Task.Run(async () =>
+      {
+          while (await periodicTimer.WaitForNextTickAsync(_cts.Token))
+          {
+              try
+              {
+                  var live = await StockDataService.GetStockDataAsync(Symbol);
+                  if (live != null)
+                  {
+                      double newPrice = (double)live.RegularMarketPrice;
+                      // Only add the new data point if it's different from the last one.
+                      if (!intradayData.Any() || Math.Abs(newPrice - intradayData.Last().Price) > 0.0001)
+                      {
+                          if (previousPrice.HasValue)
+                          {
+                              priceDifference = newPrice - previousPrice.Value;
+                              priceColor = priceDifference > 0 ? "green" :
+                                           priceDifference < 0 ? "red" : "yellow";
+                          }
+                          previousPrice = newPrice;
+                          stockData = live;
 
+                          var now = DateTime.UtcNow;
+                          if (intradayData.Any() && now <= intradayData.Last().Time)
+                          {
+                              now = intradayData.Last().Time.AddMilliseconds(1);
+                          }
+                          intradayData.Add((now, newPrice));
+
+                          await StockDataService.InsertStockPriceHistoryAsync(Symbol, newPrice);
+                          await InvokeAsync(() =>
+                          {
+                              UpdateChartData();
+                              StateHasChanged();
+                          });
+                      }
+                  }
+              }
+              catch (OperationCanceledException)
+              {
+                  break;
+              }
+              catch (Exception ex)
+              {
+                  Console.Error.WriteLine($"Timer error for {Symbol}: {ex.Message}");
+              }
+          }
+      });
+  }
+    
     private void UpdateChartData()
     {
-        // Clear existing labels and datasets.
         _lineConfig.Data.Labels.Clear();
         _lineConfig.Data.Datasets.Clear();
 
-        // Sort intraday data by time.
+        // Order the data by timestamp.
         var sortedData = intradayData.OrderBy(d => d.Time).ToList();
 
-        // Add labels (formatted time, e.g., HH:mm).
+        // Use a more precise time format if needed (including seconds).
         foreach (var entry in sortedData)
         {
-            _lineConfig.Data.Labels.Add(entry.Time.ToString("HH:mm"));
+            _lineConfig.Data.Labels.Add(entry.Time.ToString("HH:mm:ss"));
         }
 
         // Create a dataset from the price data.
@@ -200,19 +265,16 @@
                     pointColors.Add("red");
                 else
                     pointColors.Add("yellow");
-
                 prev = price;
             }
         }
-        
+
         var pointBackGroundColor = new IndexableOption<string>(pointColors.ToArray());
-        
         var dataset = new LineDataset<double>(priceData)
         {
             Label = "Live Price",
             BackgroundColor = "rgba(75, 192, 192, 0.2)",
             BorderColor = "rgba(75, 192, 192, 1)",
-            // Set individual point colors (if supported by your ChartJs.Blazor fork).
             PointBackgroundColor = pointBackGroundColor,
             Fill = false
         };
@@ -221,6 +283,8 @@
 
     public void Dispose()
     {
+        _cts.Cancel();
+        _cts.Dispose();
         _timer?.Dispose();
     }
 }

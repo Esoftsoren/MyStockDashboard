@@ -20,29 +20,41 @@ public class StockDataService
     {
         _httpClient = httpClient;
         _serviceProvider = serviceProvider;
+    
+        // Set a browser-like User-Agent.
+        _httpClient.DefaultRequestHeaders.UserAgent.ParseAdd(
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " +
+            "AppleWebKit/537.36 (KHTML, like Gecko) " +
+            "Chrome/104.0.0.0 Safari/537.36");
+    
+        // Optionally set the Accept header.
+        _httpClient.DefaultRequestHeaders.Accept.ParseAdd("application/json");
     }
+
 
     public async Task<Security> GetStockDataAsync(string symbol)
     {
-        var securities = await Yahoo.Symbols(symbol)
-            .Fields(
-                Field.Symbol,
-                Field.Currency,
-                Field.RegularMarketPrice,
-                Field.RegularMarketChange,
-                Field.RegularMarketChangePercent,
-                Field.RegularMarketDayHigh,
-                Field.RegularMarketDayLow,
-                Field.LongName
-            )
-            .QueryAsync();
-
-        if (securities.TryGetValue(symbol, out var security))
+        return await RequestThrottler.ExecuteWithThrottleAsync(async () =>
         {
-            return security;
-        }
+            var securities = await Yahoo.Symbols(symbol)
+                .Fields(
+                    Field.Symbol,
+                    Field.Currency,
+                    Field.RegularMarketPrice,
+                    Field.RegularMarketChange,
+                    Field.RegularMarketChangePercent,
+                    Field.RegularMarketDayHigh,
+                    Field.RegularMarketDayLow,
+                    Field.LongName
+                )
+                .QueryAsync();
 
-        return null;
+            if (securities.TryGetValue(symbol, out var security))
+            {
+                return security;
+            }
+            return null;
+        }) ?? throw new InvalidOperationException();
     }
 
     public async Task<IEnumerable<Stock>> SearchStocksAsync(string query)
@@ -151,19 +163,32 @@ public class StockDataService
     }
     public async Task InsertStockPriceHistoryAsync(string symbol, double price)
     {
-        using (var scope = _serviceProvider.CreateScope())
+        using var scope = _serviceProvider.CreateScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+        var history = new StockPriceHistory
         {
-            var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
-            var history = new StockPriceHistory
-            {
-                Id = Guid.NewGuid(),
-                Symbol = symbol,
-                Timestamp = DateTime.Now,
-                Price = (decimal)price // Convert to decimal for the database field
-            };
-            dbContext.StockPriceHistories.Add(history);
-            await dbContext.SaveChangesAsync();
-        }
+            Id = Guid.NewGuid(),
+            Symbol = symbol.ToUpperInvariant(),
+            Timestamp = DateTime.UtcNow,       
+            Price = (decimal)price
+        };
+        dbContext.StockPriceHistories.Add(history);
+        await dbContext.SaveChangesAsync();
     }
+    
+    public async Task<List<(DateTime Time, double Price)>> GetHistoricalDataAsync(string symbol)
+    {
+        using var scope = _serviceProvider.CreateScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+
+        var historyData = await dbContext.StockPriceHistories
+            .Where(h => h.Symbol == symbol.ToUpperInvariant()) // match normalized symbol
+            .OrderBy(h => h.Timestamp)
+            .ToListAsync();
+
+        return historyData.Select(h => (h.Timestamp, (double)h.Price)).ToList();
+    }
+
+    
 }
 
