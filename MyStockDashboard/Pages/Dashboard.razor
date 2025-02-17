@@ -4,38 +4,6 @@
 @using MudBlazor
 @inject MyStockDashboard.Services.StockDataService StockDataService
 
-<MudCard>
-    <MudCardContent>
-        <MudAutocomplete T="Stock"
-                         Label="Search Stocks"
-                         Variant="Variant.Outlined"
-                         Color="Color.Primary"
-                         Value="SelectedStock"
-                         ValueChanged="OnStockChanged"
-                         SearchFunc="SearchStocks"
-                         ToStringFunc="@(s => s?.CompanyName)"
-                         MinCharacters="3"
-                         Clearable="true"
-                         ResetValueOnEmptyText="true">
-            <ItemTemplate>
-                @{
-                var item = context;
-                }
-                <div style="display: flex; justify-content: space-between; align-items: center;">
-                    <div>
-                        @item.CompanyName (@item.Symbol)
-                        @if (item.StockPrice != 0)
-                        {
-                        <span style="margin-left: 1rem;">Price: @item.StockPrice.ToString("F2")</span>
-                        }
-                    </div>
-                    <MudIcon Icon="@Icons.Material.Filled.Add" Color="Color.Primary" Size="Size.Small" />
-                </div>
-            </ItemTemplate>
-        </MudAutocomplete>
-    </MudCardContent>
-</MudCard>
-
 <div class="stock-container">
     @foreach (var stock in StockPortfolio)
     {
@@ -44,7 +12,7 @@
         <MudButton OnClick="() => RemoveStock(stock)"
                    Color="Color.Error"
                    Variant="Variant.Outlined"
-                   Style="margin-top: 0.5rem;">
+                   Style="margin-top: 0.2rem;">
             Remove
         </MudButton>
     </div>
@@ -54,31 +22,11 @@
 @code {
     
     private List<string> StockPortfolio { get; set; } = new List<string>();
-
-    
-    private Stock SelectedStock { get; set; }
     
     protected override async Task OnInitializedAsync()
     {
         // Load the user's portfolio from the database.
         StockPortfolio = await StockDataService.GetUserPortfolioSymbolsAsync();
-    }
-    
-    private async Task OnStockChanged(Stock newValue)
-    {
-        if (newValue != null && !StockPortfolio.Contains(newValue.Symbol.ToUpper()))
-        {
-            StockPortfolio.Add(newValue.Symbol.ToUpper());
-            await StockDataService.AddStockToUserPortfolioAsync(newValue);
-            StockPortfolio = await StockDataService.GetUserPortfolioSymbolsAsync();
-            StateHasChanged();
-        }
-        SelectedStock = null; // Reset after processing.
-    }
-    
-    private async Task<IEnumerable<Stock>> SearchStocks(string value, CancellationToken cancellationToken)
-    {
-        return await StockDataService.SearchStocksAsync(value);
     }
     
     private async Task RemoveStock(string symbol)
@@ -88,5 +36,4 @@
         StockPortfolio = await StockDataService.GetUserPortfolioSymbolsAsync();
         StateHasChanged();
     }
-    
 }

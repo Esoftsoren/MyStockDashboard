@@ -1,0 +1,93 @@
+@page "/stock/{Symbol}"
+@using MyStockDashboard.Models
+@using MyStockDashboard.Services
+@inject StockStateService StockStateService
+@inject StockDataService StockDataService
+@inject ISnackbar Snackbar
+
+<PageTitle>Stock Details: @Symbol</PageTitle>
+
+@if (detailedSecurity != null)
+{
+    <MudCard Class="mb-4">
+        <MudCardContent>
+            <MudText Typo="Typo.h4">
+                @(string.IsNullOrWhiteSpace(detailedSecurity.LongName) ? Symbol : detailedSecurity.LongName)
+                <MudButton OnClick="AddToPortfolio" Variant="Variant.Filled" Color="Color.Success">
+                    + Add to Portfolio
+                </MudButton>
+            </MudText>
+            <MudGrid>
+                <MudItem xs="12" sm="6">
+                    <MudText><strong>Symbol:</strong> @detailedSecurity.Symbol</MudText>
+                </MudItem>
+                <MudItem xs="12" sm="6">
+                    <MudText>
+                        <strong>Current Price:</strong> @detailedSecurity.RegularMarketPrice.ToString("F2") @detailedSecurity.Currency
+                    </MudText>
+                </MudItem>
+                <MudItem xs="12" sm="6">
+                    <MudText>
+                        <strong>Change:</strong> @detailedSecurity.RegularMarketChange.ToString("F2") (@detailedSecurity.RegularMarketChangePercent.ToString("F2")%)
+                    </MudText>
+                </MudItem>
+                <MudItem xs="12" sm="6">
+                    <MudText>
+                        <strong>Day High / Low:</strong> @detailedSecurity.RegularMarketDayHigh.ToString("F2") / @detailedSecurity.RegularMarketDayLow.ToString("F2")
+                    </MudText>
+                </MudItem>
+                <MudItem xs="12" sm="6">
+                    <MudText><strong>Previous Close:</strong> @detailedSecurity.RegularMarketPreviousClose.ToString("F2")</MudText>
+                </MudItem>
+                <MudItem xs="12" sm="6">
+                    <MudText><strong>Exchange:</strong> @detailedSecurity.Exchange</MudText>
+                </MudItem>
+                <MudItem xs="12" sm="6">
+                    <MudText><strong>52 Week High:</strong> @detailedSecurity.FiftyTwoWeekHigh</MudText>
+                </MudItem>
+                <MudItem xs="12" sm="6">
+                    <MudText><strong>52 Week Low:</strong> @detailedSecurity.FiftyTwoWeekLow</MudText>
+                </MudItem>
+            </MudGrid>
+        </MudCardContent>
+    </MudCard>
+    
+    <StockChart Symbol="@Symbol" HistoricalData="@StockStateService.HistoricalData" InitialStockData="@detailedSecurity" />
+}
+else
+{
+    <p>Loading detailed stock data...</p>
+}
+
+@code {
+    [Parameter] public string Symbol { get; set; }
+    private YahooFinanceApi.Security detailedSecurity;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (StockStateService.CurrentSymbol?.Equals(Symbol, StringComparison.OrdinalIgnoreCase) == true)
+        {
+            detailedSecurity = StockStateService.DetailedSecurity;
+        }
+        else
+        {
+            detailedSecurity = await StockDataService.GetStockDetailedDataAsync(Symbol);
+        }
+    }
+    
+    protected override async Task OnParametersSetAsync()
+    {
+        detailedSecurity = await StockDataService.GetStockDetailedDataAsync(Symbol);
+    }
+    
+    private async Task AddToPortfolio()
+    {
+        // Add the stock to the portfolio (if not already there).
+        await StockDataService.AddStockToUserPortfolioAsync(new Stock {
+            Symbol = detailedSecurity.Symbol,
+            CompanyName = detailedSecurity.LongName
+        });
+        
+        Snackbar.Add("Stock added to your portfolio.", Severity.Success);
+    }
+}

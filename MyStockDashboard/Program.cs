@@ -14,6 +14,7 @@ builder.Services.AddServerSideBlazor();
 builder.Services.AddMudServices();
 builder.Services.AddHostedService<PressReleaseScraperService>();
 builder.Services.AddHostedService<StockHistoryUpdaterService>();
+builder.Services.AddScoped<StockStateService>();
 builder.Services.AddHttpClient<StockDataService>(); 
 builder.Services.AddDbContext<ApplicationDbContext>(options =>
     options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));

@@ -1,0 +1,52 @@
+@using MyStockDashboard.Models
+@inject MyStockDashboard.Services.StockDataService StockDataService
+
+<MudAutocomplete T="Stock"
+                 Label="Search Stocks"
+                 Variant="Variant.Outlined"
+                 Color="Color.Primary"
+                 Value="@SelectedStock"
+                 ValueChanged="OnStockChanged"
+                 SearchFunc="SearchStocks"
+                 ToStringFunc="@(s => s?.CompanyName)"
+                 MinCharacters="3"
+                 Clearable="true"
+                 ResetValueOnEmptyText="true">
+    <ItemTemplate>
+        @{
+            var item = context;
+        }
+        <div style="display: flex; justify-content: space-between; align-items: center;">
+            <div>
+                @item.CompanyName (@item.Symbol)
+                @if (item.StockPrice != 0)
+                {
+                    <span style="margin-left: 1rem;">Price: @item.StockPrice.ToString("F2")</span>
+                }
+            </div>
+            <MudIcon Icon="@Icons.Material.Filled.Add" Color="Color.Primary" Size="Size.Small" />
+        </div>
+    </ItemTemplate>
+</MudAutocomplete>
+
+@code {
+    private Stock SelectedStock { get; set; }
+
+    [Parameter]
+    public EventCallback<Stock> StockSelected { get; set; }
+
+    private async Task OnStockChanged(Stock newValue)
+    {
+        if (newValue != null)
+        {
+            // Raise an event so the parent can process the selected stock.
+            await StockSelected.InvokeAsync(newValue);
+        }
+        SelectedStock = null;
+    }
+
+    private async Task<IEnumerable<Stock>> SearchStocks(string value, CancellationToken cancellationToken)
+    {
+        return await StockDataService.SearchStocksAsync(value);
+    }
+}

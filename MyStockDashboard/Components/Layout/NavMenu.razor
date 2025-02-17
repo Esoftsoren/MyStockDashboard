@@ -1,21 +1,22 @@
-﻿<div class="top-row ps-3 navbar navbar-dark">
-    <div class="container-fluid">
-        <a class="navbar-brand" href="">MyStockDashboard</a>
-    </div>
-</div>
+﻿@inherits LayoutComponentBase
+@using MudBlazor
 
-<input type="checkbox" title="Navigation menu" class="navbar-toggler" />
+<MudLayout>
+    <MudAppBar Color="Color.Primary" Elevation="4">
+        <MudText Typo="Typo.h6" Class="ml-2">MyStockDashboard</MudText>
+        <MudSpacer />
+        <MudTextField T="String" Placeholder="Search stocks..." Variant="Variant.Outlined" Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.Search" />
+        <MudIconButton Icon="@Icons.Material.Filled.AccountCircle" Color="Color.Inherit" />
+    </MudAppBar>
 
-<div class="nav-scrollable" onclick="document.querySelector('.navbar-toggler').click()">
-    <nav class="nav flex-column">
-        <div class="nav-item px-3">
-            <NavLink class="nav-link" href="" Match="NavLinkMatch.All">
-                <span class="bi bi-house-door-fill-nav-menu" aria-hidden="true"></span> Home
-            </NavLink>
-        </div>
+    <MudDrawer Open="true" ClipMode="DrawerClipMode.Never" Variant="DrawerVariant.Temporary" Elevation="1">
+        <MudNavMenu>
+            <MudNavLink Href="/" Icon="@Icons.Material.Filled.Home" Match="NavLinkMatch.All">Home</MudNavLink>
+            <MudNavLink Href="/dashboard" Icon="@Icons.Material.Filled.Dashboard">Dashboard</MudNavLink>
+        </MudNavMenu>
+    </MudDrawer>
 
-        <NavLink class="nav-link" href="dashboard">
-            <span class="bi bi-house-door-fill-nav-menu" aria-hidden="true"></span> Dashboard
-        </NavLink>
-    </nav>
-</div>
+    <MudMainContent Class="p-4">
+        @Body
+    </MudMainContent>
+</MudLayout>

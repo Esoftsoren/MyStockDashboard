@@ -56,6 +56,87 @@ public class StockDataService
             return null;
         }) ?? throw new InvalidOperationException();
     }
+    
+    public async Task<Security> GetStockDetailedDataAsync(string symbol)
+{
+    return await RequestThrottler.ExecuteWithThrottleAsync(async () =>
+    {
+        var securities = await Yahoo.Symbols(symbol)
+            .Fields(
+                Field.Symbol,
+                Field.Currency,
+                Field.RegularMarketPrice,
+                Field.RegularMarketChange,
+                Field.RegularMarketChangePercent,
+                Field.RegularMarketDayHigh,
+                Field.RegularMarketDayLow,
+                Field.LongName,
+                Field.Ask,
+                Field.AskSize,
+                Field.Bid,
+                Field.BidSize,
+                Field.BookValue,
+                Field.AverageDailyVolume10Day,
+                Field.AverageDailyVolume3Month,
+                Field.DividendDate,
+                Field.EarningsTimestamp,
+                Field.EarningsTimestampEnd,
+                Field.EarningsTimestampStart,
+                Field.EpsForward,
+                Field.EpsTrailingTwelveMonths,
+                Field.Exchange,
+                Field.ExchangeDataDelayedBy,
+                Field.ExchangeTimezoneName,
+                Field.ExchangeTimezoneShortName,
+                Field.FiftyDayAverage,
+                Field.FiftyDayAverageChange,
+                Field.FiftyDayAverageChangePercent,
+                Field.FiftyTwoWeekHigh,
+                Field.FiftyTwoWeekHighChange,
+                Field.FiftyTwoWeekHighChangePercent,
+                Field.FiftyTwoWeekLow,
+                Field.FiftyTwoWeekLowChange,
+                Field.FiftyTwoWeekLowChangePercent,
+                Field.ForwardPE,
+                Field.FullExchangeName,
+                Field.GmtOffSetMilliseconds,
+                Field.Language,
+                Field.Market,
+                Field.MarketCap,
+                Field.MarketState,
+                Field.PriceHint,
+                Field.PriceToBook,
+                Field.QuoteSourceName,
+                Field.QuoteType,
+                Field.RegularMarketOpen,
+                Field.RegularMarketPreviousClose,
+                Field.RegularMarketTime,
+                Field.RegularMarketVolume,
+                Field.PostMarketChange,
+                Field.PostMarketChangePercent,
+                Field.PostMarketPrice,
+                Field.PostMarketTime,
+                Field.SharesOutstanding,
+                Field.ShortName,
+                Field.SourceInterval,
+                Field.Tradeable,
+                Field.TrailingAnnualDividendRate,
+                Field.TrailingAnnualDividendYield,
+                Field.TrailingPE,
+                Field.TwoHundredDayAverage,
+                Field.TwoHundredDayAverageChange,
+                Field.TwoHundredDayAverageChangePercent
+            )
+            .QueryAsync();
+
+        if (securities.TryGetValue(symbol, out var security))
+        {
+            return security;
+        }
+        return null;
+    }) ?? throw new InvalidOperationException("Could not fetch detailed stock data.");
+}
+
 
     public async Task<IEnumerable<Stock>> SearchStocksAsync(string query)
     {

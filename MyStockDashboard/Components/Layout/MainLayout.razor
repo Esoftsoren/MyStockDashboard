@@ -1,5 +1,7 @@
 ﻿@inherits LayoutComponentBase
 @using MudBlazor
+@using MyStockDashboard.Models
+@inject NavigationManager NavigationManager
 
 
 <MudThemeProvider />
@@ -8,14 +10,38 @@
 <MudPopoverProvider />
 
 <MudLayout>
-    <MudDrawer Open="true" Variant="DrawerVariant.Temporary">
+    <!-- Sidebar Drawer -->
+    <MudDrawer Open="true" ClipMode="DrawerClipMode.Never" Variant="DrawerVariant.Responsive" Elevation="1">
         <MudNavMenu>
-            <MudNavLink Href="/dashboard" Icon="@Icons.Material.Filled.TrendingUp" Text="Dashboard" />
-            <MudNavLink Href="/_Host" Icon="@Icons.Material.Filled.Dashboard" Text="Home" />
+            <MudNavLink Href="/" Icon="@Icons.Material.Filled.Home" Match="NavLinkMatch.All">Home</MudNavLink>
+            <MudNavLink Href="/dashboard" Icon="@Icons.Material.Filled.Dashboard">Dashboard</MudNavLink>
+            <!-- Add more links as needed -->
         </MudNavMenu>
     </MudDrawer>
 
-    <MudMainContent>
+    <!-- Top AppBar with StockSearch -->
+    <MudAppBar Color="Color.Primary" Elevation="4">
+        <MudText Typo="Typo.h6" Class="ml-2">MyStockDashboard</MudText>
+        <MudSpacer />
+        <!-- Reusable StockSearch Component -->
+        <StockSearch StockSelected="OnStockSelected" />
+        <MudIconButton Icon="@Icons.Material.Filled.AccountCircle" Color="Color.Inherit" OnClick="NavigateToDashBoard"/>
+    </MudAppBar>
+
+    <!-- Main Content -->
+    <MudMainContent Class="p-4">
         @Body
     </MudMainContent>
 </MudLayout>
+
+@code {
+    private async Task OnStockSelected(Stock selected)
+    {
+        NavigationManager.NavigateTo($"/stock/{selected.Symbol}");
+    }
+    
+    private async Task NavigateToDashBoard()
+    {
+        NavigationManager.NavigateTo("/dashboard");
+    }
+}
