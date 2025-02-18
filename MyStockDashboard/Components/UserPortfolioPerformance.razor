@@ -1,0 +1,379 @@
+@page "/portfolio-performance"
+@using System.Reflection
+@using System.Globalization
+@using ChartJs.Blazor.Common
+@using ChartJs.Blazor.Common.Axes
+@using ChartJs.Blazor.Common.Axes.Ticks
+@using ChartJs.Blazor.Common.Handlers
+@using ChartJs.Blazor.Interop
+@using ChartJs.Blazor.LineChart
+@using ChartJs.Blazor.BarChart
+@using MudBlazor
+@using MyStockDashboard.Services
+@inject StockDataService StockDataService
+@inject ICurrencyConversionService CurrencyConversionService
+@inject ISnackbar Snackbar
+
+<PageTitle>Portfolio Performance</PageTitle>
+
+<MudPaper Class="p-4">
+    <MudText Typo="Typo.h4" Class="mb-4">Portfolio Performance Analytics</MudText>
+
+    <!-- Display Overall Metrics -->
+    @if (aggregatedHistory.Any())
+    {
+    <MudText Typo="Typo.subtitle1"
+             Color="@(percentageChange >= 0 ? Color.Success : Color.Error)"
+             Class="mb-4">
+        @($"Current Value: {currentPortfolioValue.ToString("C", new CultureInfo("en-US"))} | Change: {totalChange.ToString("C", new CultureInfo("en-US"))} ({percentageChange:P2})")
+    </MudText>
+    }
+
+    <!-- Date Filters -->
+    <MudGrid Class="mb-4">
+        <MudItem xs="12" sm="6">
+            <MudDatePicker @bind-Date="startDate" Label="Start Date"/>
+        </MudItem>
+        <MudItem xs="12" sm="6">
+            <MudDatePicker @bind-Date="endDate" Label="End Date"/>
+        </MudItem>
+    </MudGrid>
+    <MudButton OnClick="ApplyDateFilter" Variant="Variant.Filled" Color="Color.Primary" Class="mb-4">
+        Apply Date Filter
+    </MudButton>
+
+    <!-- Two-column layout for the charts -->
+    <MudGrid>
+        <!-- Overall Performance Chart with Load More Button -->
+        <MudItem xs="12" sm="6">
+            <div class="chart-container">
+                <h3>Overall Performance</h3>
+                @if (overallChartConfig != null)
+                {
+                <div style="height:400px; width:600px; border:1px solid red;">
+                    <Chart Config="overallChartConfig"></Chart>
+                </div>
+                }
+                else
+                {
+                <p>Loading overall performance chart...</p>
+                }
+                <!-- Load More Data button only for the overall chart -->
+                <MudButton OnClick="LoadMoreData" Variant="Variant.Filled" Color="Color.Primary" Class="mt-4">
+                    Load More Data
+                </MudButton>
+            </div>
+        </MudItem>
+
+        <!-- Per Stock Performance Chart -->
+        <MudItem xs="12" sm="6">
+            <div class="chart-container">
+                <h3>Per Stock Performance</h3>
+                @if (perStockChartConfig != null)
+                {
+                <div style="height:400px; width:600px; border:1px solid red;">
+                    <Chart Config="perStockChartConfig"></Chart>
+                </div>
+                }
+                else
+                {
+                <p>Loading per-stock performance chart...</p>
+                }
+            </div>
+        </MudItem>
+    </MudGrid>
+</MudPaper>
+
+@code {
+    
+    private DateTime? startDate = DateTime.Now.AddMonths(-1);
+    private DateTime? endDate = DateTime.Now;
+
+// Portfolio metrics
+    private double currentPortfolioValue = 0;
+    private double totalChange = 0;
+    private double percentageChange = 0;
+
+// Aggregated overall historical data: (timestamp, total portfolio value)
+    private List<(DateTime Time, double Value)> aggregatedHistory = new List<(DateTime, double)>();
+
+// Per-stock performance: (symbol, change from startDate to endDate)
+    private List<(string Symbol, double Change)> perStockPerformance = new List<(string, double)>();
+
+// Portfolio symbols (loaded from DB)
+    private List<string> portfolioSymbols = new List<string>();
+
+// Chart configurations
+    private LineConfig overallChartConfig;
+    private BarConfig perStockChartConfig;
+
+// Data point limit for overall chart
+    private int _maxDataPoints = 10;
+
+    protected override async Task OnInitializedAsync()
+    {
+        portfolioSymbols = await StockDataService.GetUserPortfolioSymbolsAsync();
+        if (portfolioSymbols == null || !portfolioSymbols.Any())
+        {
+            Snackbar.Add("No stocks found in your portfolio. Please add some stocks first.", Severity.Warning);
+            return;
+        }
+
+        await LoadOverallHistoricalData();
+        CalculateOverallMetrics();
+        InitializeOverallChart();
+        UpdateOverallChartData();
+        
+        InitializePerStockChart();
+        await CalculatePerStockPerformance();
+        UpdatePerStockChartData();
+    }
+
+    private async Task ApplyDateFilter()
+    {
+        _maxDataPoints = 10;
+        await LoadOverallHistoricalData();
+        CalculateOverallMetrics();
+        UpdateOverallChartData();
+
+        await CalculatePerStockPerformance();
+        UpdatePerStockChartData();
+
+        // StateHasChanged();
+    }
+
+    /// <summary>
+    /// Loads and aggregates historical data for all stocks in the portfolio.
+    /// (Assumes each stock’s history is aligned by timestamp.)
+    /// </summary>
+    private async Task LoadOverallHistoricalData()
+    {
+        var allHistories = new List<List<(DateTime Time, double Price, string Currency)>>();
+    
+        foreach (var symbol in portfolioSymbols)
+        {
+            // Retrieve the history (which now includes currency)
+            var history = await StockDataService.GetHistoricalDataAsync(symbol);
+
+            // Apply date filters.
+            if (startDate.HasValue)
+                history = history.Where(h => h.Time >= startDate.Value).ToList();
+            if (endDate.HasValue)
+                history = history.Where(h => h.Time <= endDate.Value).ToList();
+        
+            var convertedHistory = new List<(DateTime Time, double Price, string Currency)>();
+            // Convert each data point asynchronously.
+            foreach (var h in history)
+            {
+                decimal convertedAmount = await CurrencyConversionService.ConvertAsync((decimal)h.Price, h.Currency);
+                convertedHistory.Add((h.Time, (double)convertedAmount, h.Currency));
+            }
+        
+            allHistories.Add(convertedHistory);
+        }
+
+        if (allHistories.Any() && allHistories.First().Any())
+        {
+            var baseHistory = allHistories.First();
+            aggregatedHistory = baseHistory.Select((entry, index) =>
+            {
+                double sum = entry.Price;
+                for (int i = 1; i < allHistories.Count; i++)
+                {
+                    if (allHistories[i].Count > index)
+                        sum += allHistories[i][index].Price;
+                }
+                return (entry.Time, sum);
+            }).ToList();
+        }
+        else
+        {
+            aggregatedHistory.Clear();
+        }
+    }
+
+    /// <summary>
+    /// Calculates overall portfolio metrics.
+    /// </summary>
+    private void CalculateOverallMetrics()
+    {
+        if (aggregatedHistory.Any())
+        {
+            // Ensure the data is sorted by time ascending
+            aggregatedHistory = aggregatedHistory.OrderBy(h => h.Time).ToList();
+
+            // Determine the subset of data that is actually visible on the chart
+            var visibleData = aggregatedHistory;
+            if (aggregatedHistory.Count > _maxDataPoints)
+            {
+                visibleData = aggregatedHistory.Skip(aggregatedHistory.Count - _maxDataPoints).ToList();
+            }
+
+            // Now calculate based on the visible subset
+            currentPortfolioValue = visibleData.Last().Value;
+            double initial = visibleData.First().Value;
+            totalChange = currentPortfolioValue - initial;
+            percentageChange = initial != 0 ? totalChange / initial : 0;
+        }
+    }
+
+
+    /// <summary>
+    /// Calculates per-stock performance (change from start to end date) for each stock.
+    /// </summary>
+    private async Task CalculatePerStockPerformance()
+    {
+        perStockPerformance.Clear();
+        foreach (var symbol in portfolioSymbols)
+        {
+            var history = await StockDataService.GetHistoricalDataAsync(symbol);
+            if (startDate.HasValue)
+                history = history.Where(h => h.Time >= startDate.Value).ToList();
+            if (endDate.HasValue)
+                history = history.Where(h => h.Time <= endDate.Value).ToList();
+            if (history.Any())
+            {
+                double change = history.Last().Price - history.First().Price;
+                perStockPerformance.Add((symbol, change));
+            }
+            else
+            {
+                perStockPerformance.Add((symbol, 0));
+            }
+        }
+    }
+    
+    private void InitializeOverallChart()
+    {
+        overallChartConfig = new LineConfig();
+    
+        // Ensure Options is initialized.
+        if (overallChartConfig.Options == null)
+        {
+            overallChartConfig.Options = new LineOptions();
+        }
+    
+        overallChartConfig.Options.Responsive = true;
+        overallChartConfig.Options.Title = new OptionsTitle 
+        { 
+            Display = true, 
+            Text = "Overall Portfolio Performance" 
+        };
+        overallChartConfig.Options.Scales = new Scales
+        {
+            XAxes = new List<CartesianAxis>
+            {
+                new CategoryAxis { ScaleLabel = new ScaleLabel { Display = true, LabelString = "Time" } }
+            },
+            YAxes = new List<CartesianAxis>
+            {
+                new LinearCartesianAxis 
+                { 
+                    ScaleLabel = new ScaleLabel { Display = true, LabelString = "Total Value" },
+                    Ticks = new LinearCartesianTicks 
+                    {
+                        Callback = new JavaScriptHandler<AxisTickCallback>("customJsFunctions.yTickCallback")
+                    }
+                }
+            }
+        };
+        
+        overallChartConfig.Data.Labels.Clear();
+        overallChartConfig.Data.Datasets.Clear();
+    }
+
+    
+    private void UpdateOverallChartData()
+    {
+        overallChartConfig.Data.Labels.Clear();
+        overallChartConfig.Data.Datasets.Clear();
+        
+        var filteredData = aggregatedHistory;
+        if (aggregatedHistory.Count > _maxDataPoints)
+        {
+            filteredData = aggregatedHistory.Skip(aggregatedHistory.Count - _maxDataPoints).ToList();
+        }
+    
+        foreach (var entry in filteredData)
+        {
+            overallChartConfig.Data.Labels.Add(entry.Time.ToString("HH:mm:ss"));
+        }
+    
+        var values = filteredData.Select(h => h.Value).ToList();
+        var dataset = new LineDataset<double>(values)
+        {
+            Label = "Portfolio Value",
+            BackgroundColor = "rgba(54, 162, 235, 0.2)",
+            BorderColor = "rgba(54, 162, 235, 1)",
+            Fill = false
+        };
+    
+        overallChartConfig.Data.Datasets.Add(dataset);
+    }
+    
+    private void InitializePerStockChart()
+    {
+        perStockChartConfig = new BarConfig
+        {
+            Options = new BarOptions
+            {
+                Responsive = true,
+                Title = new OptionsTitle { Display = true, Text = "Per-Stock Performance" },
+                Scales = new BarScales()
+                {
+                    XAxes = new List<CartesianAxis>
+                    {
+                        new CategoryAxis { ScaleLabel = new ScaleLabel { Display = true, LabelString = "Stock" } }
+                    },
+                    YAxes = new List<CartesianAxis>
+                    {
+                        new LinearCartesianAxis { ScaleLabel = new ScaleLabel { Display = true, LabelString = "Change" } }
+                    }
+                }
+            }
+        };
+        
+        perStockChartConfig.Data.Labels.Clear();
+        perStockChartConfig.Data.Datasets.Clear();
+    }
+    
+    private void UpdatePerStockChartData()
+    {
+        perStockChartConfig.Data.Labels.Clear();
+        perStockChartConfig.Data.Datasets.Clear();
+    
+        foreach (var item in perStockPerformance)
+        {
+            perStockChartConfig.Data.Labels.Add(item.Symbol);
+        }
+    
+        var changes = perStockPerformance.Select(p => p.Change).ToList();
+        
+        List<string> backgroundColors = new List<string>();
+        
+        foreach (var change in changes)
+        {
+            backgroundColors.Add(change >= 0 ? "rgba(0, 200, 0, 0.5)" : "rgba(200, 0, 0, 0.5)");
+        }
+        
+        var pointBackGroundColor = new IndexableOption<string>(backgroundColors.ToArray());
+        
+        var dataset = new BarDataset<double>(changes)
+        {
+            Label = "Stock Change",
+            BackgroundColor = pointBackGroundColor,
+            BorderColor = "rgba(75, 192, 192, 1)",
+            BorderWidth = 1
+        };
+        perStockChartConfig.Data.Datasets.Add(dataset);
+    }
+    
+    private void LoadMoreData()
+    {
+        _maxDataPoints += 10;
+        CalculateOverallMetrics();
+        UpdateOverallChartData();
+        StateHasChanged();
+    }
+
+}

@@ -6,4 +6,6 @@ public class StockPriceHistory
     public string Symbol { get; set; }
     public DateTime Timestamp { get; set; }
     public decimal Price { get; set; }
+    
+    public string Currency { get; set; }
 }

@@ -242,7 +242,7 @@ public class StockDataService
             .Select(x => x.Symbol)
             .ToListAsync();
     }
-    public async Task InsertStockPriceHistoryAsync(string symbol, double price)
+    public async Task InsertStockPriceHistoryAsync(string symbol, double price, string currency)
     {
         using var scope = _serviceProvider.CreateScope();
         var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
@@ -251,13 +251,14 @@ public class StockDataService
             Id = Guid.NewGuid(),
             Symbol = symbol.ToUpperInvariant(),
             Timestamp = DateTime.UtcNow,       
-            Price = (decimal)price
+            Price = (decimal)price,
+            Currency = currency.ToUpperInvariant()
         };
         dbContext.StockPriceHistories.Add(history);
         await dbContext.SaveChangesAsync();
     }
     
-    public async Task<List<(DateTime Time, double Price)>> GetHistoricalDataAsync(string symbol)
+    public async Task<List<(DateTime Time, double Price, string Currency)>> GetHistoricalDataAsync(string symbol)
     {
         using var scope = _serviceProvider.CreateScope();
         var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
@@ -267,9 +268,9 @@ public class StockDataService
             .OrderBy(h => h.Timestamp)
             .ToListAsync();
 
-        return historyData.Select(h => (h.Timestamp, (double)h.Price)).ToList();
+        return historyData
+            .Select(h => (h.Timestamp, (double)h.Price, h.Currency))
+            .ToList();
     }
-
-    
 }
 

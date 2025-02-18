@@ -1,3 +1,4 @@
+using CurrencyConverterCustom;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
@@ -12,6 +13,29 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddRazorPages();       
 builder.Services.AddServerSideBlazor();
 builder.Services.AddMudServices();
+// Register the HttpClient for the converter.
+builder.Services.AddHttpClient("CurrencyConverterClient", client =>
+{
+    client.BaseAddress = new Uri("https://api.exchangerate.host/");
+});
+builder.Services.AddSingleton<CurrencyConverterUrlOptions>(sp =>
+    new CurrencyConverterUrlOptions("https://api.exchangerate.host")
+    {
+        BaseSymbol = "EUR",  
+        AccessKey = "6819903fe623f480d59622653ee4dc49"
+    });
+
+// Register your custom converter.
+builder.Services.AddSingleton<Converter>(sp =>
+{
+    var httpClientFactory = sp.GetRequiredService<IHttpClientFactory>();
+    var client = httpClientFactory.CreateClient("CurrencyConverterClient");
+    var options = sp.GetRequiredService<CurrencyConverterUrlOptions>();
+    return new Converter(client, options);
+});
+
+// Register your conversion service.
+builder.Services.AddSingleton<ICurrencyConversionService, RealCurrencyConversionService>();
 builder.Services.AddHostedService<PressReleaseScraperService>();
 builder.Services.AddHostedService<StockHistoryUpdaterService>();
 builder.Services.AddScoped<StockStateService>();

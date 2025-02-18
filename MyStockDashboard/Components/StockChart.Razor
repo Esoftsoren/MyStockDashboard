@@ -67,7 +67,7 @@
 
     // Parameter: stock symbol for this chart.
     [Parameter] public string Symbol { get; set; } = string.Empty;
-    [Parameter] public List<(DateTime Time, double Price)>? HistoricalData { get; set; }
+    [Parameter] public List<(DateTime Time, double Price, string Currency)>? HistoricalData { get; set; }
     [Parameter] public YahooFinanceApi.Security? InitialStockData { get; set; }
     private string _currentSymbol;
 
@@ -99,13 +99,13 @@
         // If historical data was provided, use it; otherwise, fetch it.
         if (HistoricalData != null && HistoricalData.Any())
         {
-            intradayData = new List<(DateTime, double)>(HistoricalData);
+            intradayData = HistoricalData.Select(x => (x.Time, x.Price)).ToList();
         }
         else
         {
             var historical = await StockDataService.GetHistoricalDataAsync(Symbol);
             intradayData.Clear();
-            intradayData.AddRange(historical);
+            intradayData.AddRange(historical.Select(x => (x.Time, x.Price)));
         }
 
         // If initial stock data was passed in, use it.
@@ -188,7 +188,7 @@
             var historicalData = await StockDataService.GetHistoricalDataAsync(Symbol);
             if (historicalData.Any())
             {
-                intradayData.AddRange(historicalData);
+                intradayData.AddRange(historicalData.Select(x => (x.Time, x.Price)));
             }
             else
             {
@@ -225,6 +225,7 @@
                     if (live != null)
                     {
                         double newPrice = (double)live.RegularMarketPrice;
+                        string stockCurrency = live.Currency;
                         // Only add the new data point if it's different from the last one.
                         if (!intradayData.Any() || Math.Abs(newPrice - intradayData.Last().Price) > 0.0001)
                         {
@@ -246,7 +247,7 @@
 
                             intradayData.Add((now, newPrice));
 
-                            await StockDataService.InsertStockPriceHistoryAsync(Symbol, newPrice);
+                            await StockDataService.InsertStockPriceHistoryAsync(Symbol, newPrice, stockCurrency);
                             await InvokeAsync(() =>
                             {
                                 UpdateChartData();
@@ -322,7 +323,7 @@
     {
         StockStateService.CurrentSymbol = Symbol;
         StockStateService.DetailedSecurity = stockData; // already fetched
-        StockStateService.HistoricalData = new List<(DateTime, double)>(intradayData);
+        StockStateService.HistoricalData = new List<(DateTime Time, double Price, string Currency)>(intradayData.Select(x => (x.Time, x.Price, currency)));
         NavigationManager.NavigateTo($"/stock/{Symbol}");
     }
 
