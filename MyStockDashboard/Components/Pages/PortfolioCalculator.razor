@@ -1,0 +1,165 @@
+@page "/portfolio-calculator"
+@using System.Globalization
+@using MudBlazor
+@using MyStockDashboard.Models
+@using MyStockDashboard.Services
+@inject StockDataService StockDataService
+@inject ICurrencyConversionService CurrencyConversionService
+@inject ISnackbar Snackbar
+
+<PageTitle>Portfolio Calculator</PageTitle>
+
+<MudPaper Class="p-4">
+    <MudText Typo="Typo.h4" Class="mb-4">Portfolio Calculator</MudText>
+
+    <!-- Portfolio Table -->
+    <MudTable Items="PortfolioItems" Hover="true" Bordered="true">
+        <HeaderContent>
+            <MudTh>Stock Symbol</MudTh>
+            <MudTh>Quantity</MudTh>
+            <MudTh>Purchase Price (Local)</MudTh>
+            <MudTh>Purchase Price (USD)</MudTh>
+            <MudTh>Latest Price (USD)</MudTh>
+            <MudTh>Profit/Loss (USD)</MudTh>
+            <MudTh>Profit/Loss (%)</MudTh>
+        </HeaderContent>
+        <RowTemplate>
+            <MudTd DataLabel="Stock Symbol">@context.Symbol</MudTd>
+            <MudTd DataLabel="Quantity">
+                <MudNumericField T="double" @bind-Value="context.Quantity" />
+            </MudTd>
+            <!-- User enters the purchase price in local currency -->
+            <MudTd DataLabel="Purchase Price (Local)">
+                <MudNumericField T="decimal" @bind-Value="context.PurchasePrice" />
+            </MudTd>
+            <!-- Display converted purchase price in USD -->
+            <MudTd DataLabel="Purchase Price (USD)">
+                @if(context.PurchasePriceUSD.HasValue)
+                {
+                @(context.PurchasePriceUSD.Value.ToString("C", CultureInfo.CreateSpecificCulture("en-US")))
+                }
+                else
+                {
+                <span>N/A</span>
+                }
+            </MudTd>
+            <MudTd DataLabel="Latest Price (USD)">
+                @if(context.LatestPrice.HasValue)
+                {
+                @(context.LatestPrice.Value.ToString("C", CultureInfo.CreateSpecificCulture("en-US")))
+                }
+            </MudTd>
+            <MudTd DataLabel="Profit/Loss (USD)">
+                @if(context.LatestPrice.HasValue && context.PurchasePriceUSD.HasValue)
+                {
+                var profitLoss = ((context.LatestPrice.Value - context.PurchasePriceUSD.Value) * (decimal)context.Quantity);
+                @(profitLoss.ToString("C", CultureInfo.CreateSpecificCulture("en-US")))
+                }
+            </MudTd>
+            <MudTd DataLabel="Profit/Loss (%)">
+                @if(context.LatestPrice.HasValue && context.PurchasePriceUSD.HasValue && context.PurchasePriceUSD.Value > 0)
+                {
+                var pct = ((context.LatestPrice.Value - context.PurchasePriceUSD.Value) / context.PurchasePriceUSD.Value * 100);
+                @(pct.ToString("F2") + "%")
+                }
+            </MudTd>
+        </RowTemplate>
+    </MudTable>
+
+    <MudButton OnClick="CalculatePortfolio" Variant="Variant.Filled" Color="Color.Primary" Class="mt-4">
+        Calculate Portfolio Performance
+    </MudButton>
+
+    <!-- Overall Summary -->
+    <MudText Typo="Typo.subtitle1" Class="mt-4">
+        @if (TotalProfitLoss.HasValue)
+        {
+        @($"Total Profit/Loss: {TotalProfitLoss.Value.ToString("C", CultureInfo.CreateSpecificCulture("en-US"))}")
+        }
+    </MudText>
+</MudPaper>
+
+@code {
+    
+    private List<PortfolioItemModel> PortfolioItems = new List<PortfolioItemModel>();
+    private decimal? TotalProfitLoss { get; set; } = 0;
+
+    protected override async Task OnInitializedAsync()
+    {
+        // Retrieve portfolio symbols from the database.
+        var symbols = await StockDataService.GetUserPortfolioSymbolsAsync();
+        if (symbols != null && symbols.Any())
+        {
+            // Pre-fill the portfolio items with symbol only.
+            PortfolioItems = symbols.Select(s => new PortfolioItemModel
+            {
+                Symbol = s,
+                Quantity = 0,
+                PurchasePrice = 0
+            }).ToList();
+        }
+        else
+        {
+            Snackbar.Add("No stocks found in your portfolio. Please add some stocks first.", Severity.Warning);
+        }
+    }
+
+private async Task CalculatePortfolio()
+    {
+        TotalProfitLoss = 0;
+        decimal totalCostBasis = 0;
+        decimal totalCurrentValue = 0;
+
+        foreach (var item in PortfolioItems)
+        {
+            // Validate required inputs.
+            if (item.Quantity <= 0)
+            {
+                Snackbar.Add($"Please enter a valid quantity for {item.Symbol}.", Severity.Warning);
+                continue;
+            }
+            
+            if (item.PurchasePrice <= 0)
+            {
+                Snackbar.Add($"Please enter the purchase price for {item.Symbol}.", Severity.Warning);
+                continue;
+            }
+
+            // Get the latest stock data.
+            var security = await StockDataService.GetStockDataAsync(item.Symbol);
+            if (security == null)
+            {
+                Snackbar.Add($"Could not retrieve latest price for {item.Symbol}.", Severity.Error);
+                continue;
+            }
+
+            // Convert the latest market price to USD.
+            item.LatestPrice = await CurrencyConversionService.ConvertAsync(
+                (decimal)security.RegularMarketPrice, security.Currency);
+
+            // Convert the purchase price to USD.
+            // Assume the purchase was made in the same currency as the stock’s market price.
+            if (string.Equals(security.Currency, "USD", StringComparison.OrdinalIgnoreCase))
+            {
+                item.PurchasePriceUSD = item.PurchasePrice;
+            }
+            else
+            {
+                item.PurchasePriceUSD = await CurrencyConversionService.ConvertAsync(item.PurchasePrice, security.Currency);
+            }
+
+            // Calculate cost basis and current value.
+            decimal costBasis = item.PurchasePriceUSD.Value * (decimal)item.Quantity;
+            decimal currentValue = item.LatestPrice.Value * (decimal)item.Quantity;
+            totalCostBasis += costBasis;
+            totalCurrentValue += currentValue;
+
+            // Log for debugging.
+            Console.WriteLine($"{item.Symbol}: Qty={item.Quantity}, PurchasePriceUSD={item.PurchasePriceUSD}, LatestPrice={item.LatestPrice}, CostBasis={costBasis}, CurrentValue={currentValue}");
+        }
+
+        TotalProfitLoss = totalCurrentValue - totalCostBasis;
+    }
+
+
+}

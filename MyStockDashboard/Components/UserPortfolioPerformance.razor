@@ -22,11 +22,11 @@
     <!-- Display Overall Metrics -->
     @if (aggregatedHistory.Any())
     {
-    <MudText Typo="Typo.subtitle1"
-             Color="@(percentageChange >= 0 ? Color.Success : Color.Error)"
-             Class="mb-4">
-        @($"Current Value: {currentPortfolioValue.ToString("C", new CultureInfo("en-US"))} | Change: {totalChange.ToString("C", new CultureInfo("en-US"))} ({percentageChange:P2})")
-    </MudText>
+        <MudText Typo="Typo.subtitle1"
+                 Color="@(percentageChange >= 0 ? Color.Success : Color.Error)"
+                 Class="mb-4">
+            @($"Current Value: {currentPortfolioValue.ToString("C", new CultureInfo("en-US"))} | Change: {totalChange.ToString("C", new CultureInfo("en-US"))} ({percentageChange:P2})")
+        </MudText>
     }
 
     <!-- Date Filters -->
@@ -50,18 +50,14 @@
                 <h3>Overall Performance</h3>
                 @if (overallChartConfig != null)
                 {
-                <div style="height:400px; width:600px; border:1px solid red;">
-                    <Chart Config="overallChartConfig"></Chart>
-                </div>
+                    <div style="height:400px; width:600px; border:1px solid red;">
+                        <Chart Config="overallChartConfig"></Chart>
+                    </div>
                 }
                 else
                 {
-                <p>Loading overall performance chart...</p>
+                    <p>Loading overall performance chart...</p>
                 }
-                <!-- Load More Data button only for the overall chart -->
-                <MudButton OnClick="LoadMoreData" Variant="Variant.Filled" Color="Color.Primary" Class="mt-4">
-                    Load More Data
-                </MudButton>
             </div>
         </MudItem>
 
@@ -71,13 +67,13 @@
                 <h3>Per Stock Performance</h3>
                 @if (perStockChartConfig != null)
                 {
-                <div style="height:400px; width:600px; border:1px solid red;">
-                    <Chart Config="perStockChartConfig"></Chart>
-                </div>
+                    <div style="height:400px; width:600px; border:1px solid red;">
+                        <Chart Config="perStockChartConfig"></Chart>
+                    </div>
                 }
                 else
                 {
-                <p>Loading per-stock performance chart...</p>
+                    <p>Loading per-stock performance chart...</p>
                 }
             </div>
         </MudItem>
@@ -85,9 +81,9 @@
 </MudPaper>
 
 @code {
-    
-    private DateTime? startDate = DateTime.Now.AddMonths(-1);
-    private DateTime? endDate = DateTime.Now;
+
+    private DateTime? startDate = DateTime.Today;
+    private DateTime? endDate = DateTime.Today;
 
 // Portfolio metrics
     private double currentPortfolioValue = 0;
@@ -119,101 +115,182 @@
             return;
         }
 
-        await LoadOverallHistoricalData();
-        CalculateOverallMetrics();
+        await RebuildAggregatedHistoryAsync();
+        CalculateOverallMetricsFromAggregatedHistory();
         InitializeOverallChart();
         UpdateOverallChartData();
-        
-        InitializePerStockChart();
+
         await CalculatePerStockPerformance();
+        InitializePerStockChart();
         UpdatePerStockChartData();
     }
+
 
     private async Task ApplyDateFilter()
     {
+        Console.WriteLine($"New startDate: {startDate}, endDate: {endDate}");
         _maxDataPoints = 10;
-        await LoadOverallHistoricalData();
-        CalculateOverallMetrics();
+        await RebuildAggregatedHistoryAsync();
+        CalculateOverallMetricsFromAggregatedHistory();
         UpdateOverallChartData();
-
         await CalculatePerStockPerformance();
         UpdatePerStockChartData();
-
-        // StateHasChanged();
+        StateHasChanged();
     }
+
 
     /// <summary>
     /// Loads and aggregates historical data for all stocks in the portfolio.
     /// (Assumes each stock’s history is aligned by timestamp.)
     /// </summary>
-    private async Task LoadOverallHistoricalData()
+    private async Task RebuildAggregatedHistoryAsync()
     {
-        var allHistories = new List<List<(DateTime Time, double Price, string Currency)>>();
-    
+        // Validate date filters.
+        if (startDate.HasValue && endDate.HasValue && startDate.Value.Date > endDate.Value.Date)
+        {
+            Snackbar.Add("Start date cannot be greater than end date.", Severity.Error);
+            return;
+        }
+
+        // List to store each stock's daily data (grouped by Date).
+        var dailyStockData = new List<Dictionary<DateTime, (double Open, double Close)>>();
+
         foreach (var symbol in portfolioSymbols)
         {
-            // Retrieve the history (which now includes currency)
+            // Retrieve historical data for this stock.
             var history = await StockDataService.GetHistoricalDataAsync(symbol);
 
             // Apply date filters.
-            if (startDate.HasValue)
-                history = history.Where(h => h.Time >= startDate.Value).ToList();
-            if (endDate.HasValue)
-                history = history.Where(h => h.Time <= endDate.Value).ToList();
-        
-            var convertedHistory = new List<(DateTime Time, double Price, string Currency)>();
-            // Convert each data point asynchronously.
+            if (startDate.HasValue && endDate.HasValue && startDate.Value.Date == endDate.Value.Date)
+            {
+                // For a single day, adjust the filter to cover the entire day.
+                DateTime adjustedStart = startDate.Value.Date;
+                DateTime adjustedEnd = startDate.Value.Date.AddDays(1).AddSeconds(-1);
+                history = history.Where(h => h.Time >= adjustedStart && h.Time <= adjustedEnd).ToList();
+            }
+            else
+            {
+                if (startDate.HasValue)
+                    history = history.Where(h => h.Time >= startDate.Value).ToList();
+                if (endDate.HasValue)
+                    history = history.Where(h => h.Time <= endDate.Value).ToList();
+            }
+
+            // Convert prices to your target currency.
+            var convertedHistory = new List<(DateTime Time, double Price)>();
             foreach (var h in history)
             {
                 decimal convertedAmount = await CurrencyConversionService.ConvertAsync((decimal)h.Price, h.Currency);
-                convertedHistory.Add((h.Time, (double)convertedAmount, h.Currency));
+                convertedHistory.Add((h.Time, (double)convertedAmount));
             }
-        
-            allHistories.Add(convertedHistory);
+
+            // Group data by day: record the first (open) and last (close) price of the day.
+            var dailyData = convertedHistory
+                .GroupBy(x => x.Time.Date)
+                .ToDictionary(
+                    g => g.Key,
+                    g => (
+                        Open: g.OrderBy(x => x.Time).First().Price,
+                        Close: g.OrderBy(x => x.Time).Last().Price)
+                );
+
+            dailyStockData.Add(dailyData);
         }
 
-        if (allHistories.Any() && allHistories.First().Any())
+        // Build a union of all dates across stocks.
+        var allDates = dailyStockData
+            .SelectMany(dict => dict.Keys)
+            .Distinct()
+            .OrderBy(d => d)
+            .ToList();
+
+        // For each date, compute the aggregated portfolio value by summing each stock’s closing price.
+        // If a stock has no data for a day, you might choose to use its last available closing price.
+        var newAggregatedHistory = new List<(DateTime Date, double Value)>();
+        foreach (var date in allDates)
         {
-            var baseHistory = allHistories.First();
-            aggregatedHistory = baseHistory.Select((entry, index) =>
+            double totalValue = 0;
+            foreach (var stockDaily in dailyStockData)
             {
-                double sum = entry.Price;
-                for (int i = 1; i < allHistories.Count; i++)
+                if (stockDaily.TryGetValue(date, out var prices))
                 {
-                    if (allHistories[i].Count > index)
-                        sum += allHistories[i][index].Price;
+                    totalValue += prices.Close;
                 }
-                return (entry.Time, sum);
-            }).ToList();
+                else
+                {
+                    // Optional: use the last known closing value if there's no data on this day.
+                    var previousDates = stockDaily.Keys.Where(d => d < date).OrderByDescending(d => d);
+                    if (previousDates.Any())
+                    {
+                        var lastDate = previousDates.First();
+                        totalValue += stockDaily[lastDate].Close;
+                    }
+                }
+            }
+
+            newAggregatedHistory.Add((date, totalValue));
         }
-        else
+
+        aggregatedHistory = newAggregatedHistory;
+
+        // Optionally, compute per-stock performance.
+        // For a single day, this compares the first price (open) with the last price (close) for that day.
+        // For multiple days, it compares the opening price on the first available day versus the closing price on the last.
+        perStockPerformance = new List<(string Symbol, double Change)>();
+        for (int i = 0; i < portfolioSymbols.Count; i++)
         {
-            aggregatedHistory.Clear();
+            var symbol = portfolioSymbols[i];
+            var dailyData = dailyStockData[i];
+
+            // Find the earliest day on/after the startDate and the latest day on/before the endDate.
+            var firstDate = dailyData.Keys
+                .Where(d => !startDate.HasValue || d >= startDate.Value.Date)
+                .OrderBy(d => d)
+                .FirstOrDefault();
+            var lastDate = dailyData.Keys
+                .Where(d => !endDate.HasValue || d <= endDate.Value.Date)
+                .OrderByDescending(d => d)
+                .FirstOrDefault();
+
+            if (firstDate != default && lastDate != default)
+            {
+                var open = dailyData[firstDate].Open;
+                var close = dailyData[lastDate].Close;
+                var change = close - open;
+                perStockPerformance.Add((symbol, change));
+            }
         }
     }
+
 
     /// <summary>
     /// Calculates overall portfolio metrics.
     /// </summary>
-    private void CalculateOverallMetrics()
+    private void CalculateOverallMetricsFromAggregatedHistory()
     {
         if (aggregatedHistory.Any())
         {
-            // Ensure the data is sorted by time ascending
-            aggregatedHistory = aggregatedHistory.OrderBy(h => h.Time).ToList();
+            // Ensure aggregated history is sorted by time ascending.
+            var sortedData = aggregatedHistory.OrderBy(h => h.Time).ToList();
 
-            // Determine the subset of data that is actually visible on the chart
-            var visibleData = aggregatedHistory;
-            if (aggregatedHistory.Count > _maxDataPoints)
+            // Determine the subset of data that's visible on the chart.
+            var visibleData = sortedData;
+            if (sortedData.Count > _maxDataPoints)
             {
-                visibleData = aggregatedHistory.Skip(aggregatedHistory.Count - _maxDataPoints).ToList();
+                visibleData = sortedData.Skip(sortedData.Count - _maxDataPoints).ToList();
             }
 
-            // Now calculate based on the visible subset
+            // Use the first and last visible data points to calculate metrics.
             currentPortfolioValue = visibleData.Last().Value;
             double initial = visibleData.First().Value;
             totalChange = currentPortfolioValue - initial;
             percentageChange = initial != 0 ? totalChange / initial : 0;
+        }
+        else
+        {
+            currentPortfolioValue = 0;
+            totalChange = 0;
+            percentageChange = 0;
         }
     }
 
@@ -231,10 +308,26 @@
                 history = history.Where(h => h.Time >= startDate.Value).ToList();
             if (endDate.HasValue)
                 history = history.Where(h => h.Time <= endDate.Value).ToList();
+
             if (history.Any())
             {
-                double change = history.Last().Price - history.First().Price;
-                perStockPerformance.Add((symbol, change));
+                var orderedHistory = history.OrderBy(h => h.Time).ToList();
+                var firstData = orderedHistory.First();
+                var lastData = orderedHistory.Last();
+
+
+                // Convert both to USD (or your target currency)
+                decimal initialConverted = await CurrencyConversionService.ConvertAsync((decimal)firstData.Price, firstData.Currency);
+                decimal latestConverted = await CurrencyConversionService.ConvertAsync((decimal)lastData.Price, lastData.Currency);
+
+                double percentageChangeForStock = 0;
+                if (initialConverted != 0)
+                {
+                    // Multiply by 100 to express as a percentage.
+                    percentageChangeForStock = (double)((latestConverted - initialConverted) / initialConverted * 100);
+                }
+
+                perStockPerformance.Add((symbol, percentageChangeForStock));
             }
             else
             {
@@ -242,63 +335,66 @@
             }
         }
     }
-    
+
+
     private void InitializeOverallChart()
     {
         overallChartConfig = new LineConfig();
-    
+
         // Ensure Options is initialized.
         if (overallChartConfig.Options == null)
         {
             overallChartConfig.Options = new LineOptions();
         }
-    
+
         overallChartConfig.Options.Responsive = true;
-        overallChartConfig.Options.Title = new OptionsTitle 
-        { 
-            Display = true, 
-            Text = "Overall Portfolio Performance" 
+        overallChartConfig.Options.Title = new OptionsTitle
+        {
+            Display = true,
+            Text = "Overall Portfolio Performance"
         };
+        
+        
         overallChartConfig.Options.Scales = new Scales
         {
             XAxes = new List<CartesianAxis>
             {
-                new CategoryAxis { ScaleLabel = new ScaleLabel { Display = true, LabelString = "Time" } }
+                new CategoryAxis { ScaleLabel = new ScaleLabel { Display = true, LabelString = "Date" } }
             },
             YAxes = new List<CartesianAxis>
             {
-                new LinearCartesianAxis 
-                { 
+                new LinearCartesianAxis
+                {
                     ScaleLabel = new ScaleLabel { Display = true, LabelString = "Total Value" },
-                    Ticks = new LinearCartesianTicks 
+                    Ticks = new LinearCartesianTicks
                     {
                         Callback = new JavaScriptHandler<AxisTickCallback>("customJsFunctions.yTickCallback")
                     }
                 }
             }
         };
-        
+
         overallChartConfig.Data.Labels.Clear();
         overallChartConfig.Data.Datasets.Clear();
     }
 
-    
+
     private void UpdateOverallChartData()
     {
         overallChartConfig.Data.Labels.Clear();
         overallChartConfig.Data.Datasets.Clear();
-        
+
         var filteredData = aggregatedHistory;
         if (aggregatedHistory.Count > _maxDataPoints)
         {
             filteredData = aggregatedHistory.Skip(aggregatedHistory.Count - _maxDataPoints).ToList();
         }
-    
+
         foreach (var entry in filteredData)
         {
-            overallChartConfig.Data.Labels.Add(entry.Time.ToString("HH:mm:ss"));
+            overallChartConfig.Data.Labels.Add(entry.Time.ToString("yyyy-MM-dd"));
         }
-    
+
         var values = filteredData.Select(h => h.Value).ToList();
         var dataset = new LineDataset<double>(values)
         {
@@ -307,10 +403,10 @@
             BorderColor = "rgba(54, 162, 235, 1)",
             Fill = false
         };
-    
+
         overallChartConfig.Data.Datasets.Add(dataset);
     }
-    
+
     private void InitializePerStockChart()
     {
         perStockChartConfig = new BarConfig
@@ -332,48 +428,39 @@
                 }
             }
         };
-        
+
         perStockChartConfig.Data.Labels.Clear();
         perStockChartConfig.Data.Datasets.Clear();
     }
-    
+
     private void UpdatePerStockChartData()
     {
         perStockChartConfig.Data.Labels.Clear();
         perStockChartConfig.Data.Datasets.Clear();
-    
+
         foreach (var item in perStockPerformance)
         {
             perStockChartConfig.Data.Labels.Add(item.Symbol);
         }
-    
-        var changes = perStockPerformance.Select(p => p.Change).ToList();
-        
+
+        var percentages = perStockPerformance.Select(p => p.Change).ToList();
+
         List<string> backgroundColors = new List<string>();
-        
-        foreach (var change in changes)
+        foreach (var pct in percentages)
         {
-            backgroundColors.Add(change >= 0 ? "rgba(0, 200, 0, 0.5)" : "rgba(200, 0, 0, 0.5)");
+            backgroundColors.Add(pct >= 0 ? "rgba(0, 200, 0, 0.5)" : "rgba(200, 0, 0, 0.5)");
         }
-        
+
         var pointBackGroundColor = new IndexableOption<string>(backgroundColors.ToArray());
-        
-        var dataset = new BarDataset<double>(changes)
+
+        var dataset = new BarDataset<double>(percentages)
         {
-            Label = "Stock Change",
+            Label = "Stock Change (%)",
             BackgroundColor = pointBackGroundColor,
             BorderColor = "rgba(75, 192, 192, 1)",
             BorderWidth = 1
         };
+
         perStockChartConfig.Data.Datasets.Add(dataset);
     }
-    
-    private void LoadMoreData()
-    {
-        _maxDataPoints += 10;
-        CalculateOverallMetrics();
-        UpdateOverallChartData();
-        StateHasChanged();
-    }
-
 }

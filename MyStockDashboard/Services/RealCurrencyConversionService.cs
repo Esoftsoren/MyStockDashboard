@@ -31,6 +31,11 @@ namespace MyStockDashboard.Services
                 // 1 USD = 10.71 SEK (fixed rate)
                 return amount / 10.71m;
             }
+            
+            if(string.Equals(fromCurrency, "USD", StringComparison.OrdinalIgnoreCase))
+            {
+                return amount / 1;
+            }
 
             // Otherwise, use the API-provided rates.
             var rates = await _converter.GetRatesAsync();
